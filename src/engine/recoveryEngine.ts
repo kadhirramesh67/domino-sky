@@ -3,8 +3,22 @@ import type { DisruptionInput, SimulationResult, SimulationMetrics } from '../ty
 import type { RecoveryCandidate, RecoveryAction, MetricsDelta } from '../types/recovery';
 import { simulateDisruption } from './simulateDisruption';
 import { parseTime } from './timeUtils';
+import {
+  BUFFER_LIMITS,
+  SCORING_WEIGHTS,
+  VALIDATION_LIMITS,
+  RECOVERY_ACTION_TYPES,
+  FLIGHT_STATUS,
+} from '../constants/index';
 
-function computeDelta(before: SimulationMetrics, after: SimulationMetrics): MetricsDelta {
+/**
+ * Computes difference in operational metrics before and after applying a candidate recovery action.
+ *
+ * @param before Baseline simulation metrics
+ * @param after Metrics after applying recovery action
+ * @returns Structured metrics delta
+ */
+export function computeDelta(before: SimulationMetrics, after: SimulationMetrics): MetricsDelta {
   return {
     deltaDelayMinutes: after.totalDelayMinutes - before.totalDelayMinutes,
     deltaStrandedPax: after.totalStrandedPax - before.totalStrandedPax,
@@ -15,60 +29,64 @@ function computeDelta(before: SimulationMetrics, after: SimulationMetrics): Metr
   };
 }
 
-function scoreCandidate(delta: MetricsDelta): number {
-  // Negative = improvement; lower score = better
+/**
+ * Calculates a composite penalty score for a candidate recovery action.
+ * Lower (more negative) score indicates greater improvement across stranded pax, delay, and crew breaches.
+ *
+ * @param delta Metrics delta produced by recovery action
+ * @returns Composite operational score
+ */
+export function scoreCandidate(delta: MetricsDelta): number {
   return (
-    delta.deltaStrandedPax * 3 +
-    delta.deltaDelayMinutes * 0.1 +
-    delta.deltaCrewBreaches * 50
+    delta.deltaStrandedPax * SCORING_WEIGHTS.STRANDED_PAX +
+    delta.deltaDelayMinutes * SCORING_WEIGHTS.DELAY_MINUTES +
+    delta.deltaCrewBreaches * SCORING_WEIGHTS.CREW_BREACH
   );
 }
 
-export function generateRecoveryCandidates(
+/**
+ * Identifies viable spare aircraft swap candidates from network spare bases (e.g. BLR, DEL).
+ */
+function findSpareSwapCandidates(
   network: FlightNetwork,
   input: DisruptionInput,
-  baseResult: SimulationResult
+  baseResult: SimulationResult,
+  closeEnd: number
 ): RecoveryCandidate[] {
   const candidates: RecoveryCandidate[] = [];
-  const closeStart = parseTime(input.startTime);
-  const closeEnd = closeStart + input.durationMinutes;
 
-  // ── Spare Swap Candidates ────────────────────────────────────────────────
   for (const spare of network.spare_aircraft) {
     const spareBase = spare.base;
 
-    // Find delayed or crew_grounded flights departing from spare's base
     const eligibleFlights = baseResult.flights.filter(
-      f =>
+      (f) =>
         f.origin === spareBase &&
-        (f.status === 'delayed' || f.status === 'crew_grounded') &&
+        (f.status === FLIGHT_STATUS.DELAYED || f.status === FLIGHT_STATUS.CREW_GROUNDED) &&
         f.delayMinutes > 0
     );
 
     for (const targetFlight of eligibleFlights) {
-      // Find all subsequent flights in this aircraft chain
       const tailFlights = baseResult.flights
-        .filter(f => f.tail_id === targetFlight.tail_id)
+        .filter((f) => f.tail_id === targetFlight.tail_id)
         .sort((a, b) => a.leg_order - b.leg_order);
 
-      const startIdx = tailFlights.findIndex(f => f.flight_id === targetFlight.flight_id);
+      const startIdx = tailFlights.findIndex((f) => f.flight_id === targetFlight.flight_id);
       if (startIdx < 0) continue;
 
-      const targetFlightIds = tailFlights.slice(startIdx).map(f => f.flight_id);
-
-      // Spare can depart from base unless base is the closed airport
+      const targetFlightIds = tailFlights.slice(startIdx).map((f) => f.flight_id);
       const spareAvailableFrom = parseTime(spare.available_from);
-      const spareEarliestDep = spareBase === input.airport
-        ? Math.max(spareAvailableFrom, closeEnd)
-        : spareAvailableFrom;
+      const spareEarliestDep =
+        spareBase === input.airport
+          ? Math.max(spareAvailableFrom, closeEnd)
+          : spareAvailableFrom;
 
-      if (spareEarliestDep > targetFlight.scheduledDep + 240) {
-        continue; // Spare available too late to help
+      if (spareEarliestDep > targetFlight.scheduledDep + BUFFER_LIMITS.SPARE_MAX_HORIZON_MINUTES) {
+        continue;
       }
 
       const action: RecoveryAction = {
         id: `SPARE_SWAP_${spare.tail_id}_${targetFlight.flight_id}`,
-        type: 'SPARE_SWAP',
+        type: RECOVERY_ACTION_TYPES.SPARE_SWAP,
         label: `Swap ${spare.tail_id} onto ${targetFlight.flight_id} chain`,
         description: `Deploy spare ${spare.tail_id} (base: ${spareBase}) to take over ${targetFlight.flight_id} and ${targetFlightIds.length - 1} subsequent leg(s), resetting crew duty`,
         targetFlightIds,
@@ -90,28 +108,44 @@ export function generateRecoveryCandidates(
     }
   }
 
-  // ── Cancel Single Flight Candidates ─────────────────────────────────────
+  return candidates;
+}
+
+/**
+ * Identifies viable single flight cancellations or out-and-back turn pair cancellations.
+ */
+function findTurnPairAndCancellationCandidates(
+  network: FlightNetwork,
+  input: DisruptionInput,
+  baseResult: SimulationResult
+): RecoveryCandidate[] {
+  const candidates: RecoveryCandidate[] = [];
   const delayedFlights = baseResult.flights.filter(
-    f => (f.status === 'delayed' || f.status === 'crew_grounded') && f.leg_order === 1
+    (f) =>
+      (f.status === FLIGHT_STATUS.DELAYED || f.status === FLIGHT_STATUS.CREW_GROUNDED) &&
+      f.leg_order === 1
   );
 
-  for (const targetFlight of delayedFlights.slice(0, 5)) { // Limit candidates
-    // Find all legs for this tail
+  for (const targetFlight of delayedFlights.slice(0, 5)) {
     const tailFlights = baseResult.flights
-      .filter(f => f.tail_id === targetFlight.tail_id)
+      .filter((f) => f.tail_id === targetFlight.tail_id)
       .sort((a, b) => a.leg_order - b.leg_order);
 
-    // Check if it's an out-and-back (first leg goes somewhere, second returns)
+    const firstLeg = tailFlights[0];
+    const secondLeg = tailFlights[1];
+
     const isOutAndBack =
       tailFlights.length >= 2 &&
-      tailFlights[0].destination === tailFlights[1].origin &&
-      tailFlights[1].destination === tailFlights[0].origin;
+      firstLeg !== undefined &&
+      secondLeg !== undefined &&
+      firstLeg.destination === secondLeg.origin &&
+      secondLeg.destination === firstLeg.origin;
 
-    if (isOutAndBack) {
-      const turnPairIds = [tailFlights[0].flight_id, tailFlights[1].flight_id];
+    if (isOutAndBack && firstLeg && secondLeg) {
+      const turnPairIds = [firstLeg.flight_id, secondLeg.flight_id];
       const turnAction: RecoveryAction = {
         id: `CANCEL_TURN_${targetFlight.tail_id}`,
-        type: 'CANCEL_TURN_PAIR',
+        type: RECOVERY_ACTION_TYPES.CANCEL_TURN_PAIR,
         label: `Cancel ${turnPairIds[0]}/${turnPairIds[1]} turn`,
         description: `Cancel out-and-back turn ${targetFlight.origin}→${targetFlight.destination}→${targetFlight.origin} to stop delay propagation`,
         targetFlightIds: turnPairIds,
@@ -132,7 +166,7 @@ export function generateRecoveryCandidates(
     } else {
       const cancelAction: RecoveryAction = {
         id: `CANCEL_FLIGHT_${targetFlight.flight_id}`,
-        type: 'CANCEL_FLIGHT',
+        type: RECOVERY_ACTION_TYPES.CANCEL_FLIGHT,
         label: `Cancel ${targetFlight.flight_id}`,
         description: `Cancel ${targetFlight.origin}→${targetFlight.destination} (${targetFlight.pax} pax) to stop delay propagation`,
         targetFlightIds: [targetFlight.flight_id],
@@ -153,24 +187,38 @@ export function generateRecoveryCandidates(
     }
   }
 
-  // Also try cancelling the first affected flight of the closed airport directly
+  return candidates;
+}
+
+/**
+ * Identifies bottleneck cancellation candidates directly at the closed airport.
+ */
+function findBottleneckCancellationCandidates(
+  network: FlightNetwork,
+  input: DisruptionInput,
+  baseResult: SimulationResult,
+  existingCandidates: RecoveryCandidate[]
+): RecoveryCandidate[] {
+  const candidates: RecoveryCandidate[] = [];
   const directlyAffected = baseResult.flights.filter(
-    f =>
+    (f) =>
       (f.origin === input.airport || f.destination === input.airport) &&
-      f.status === 'delayed' &&
+      f.status === FLIGHT_STATUS.DELAYED &&
       f.leg_order === 1
   );
 
   for (const f of directlyAffected.slice(0, 3)) {
     const action: RecoveryAction = {
       id: `CANCEL_BOTTLENECK_${f.flight_id}`,
-      type: 'CANCEL_FLIGHT',
+      type: RECOVERY_ACTION_TYPES.CANCEL_FLIGHT,
       label: `Cancel bottleneck ${f.flight_id}`,
       description: `Cancel ${f.origin}→${f.destination} to break cascade chain for tail ${f.tail_id}`,
       targetFlightIds: [f.flight_id],
     };
 
-    if (candidates.some(c => c.action.targetFlightIds.includes(f.flight_id))) continue;
+    if (existingCandidates.some((c) => c.action.targetFlightIds.includes(f.flight_id))) {
+      continue;
+    }
 
     const afterResult = simulateDisruption(network, input, action);
     const delta = computeDelta(baseResult.metrics, afterResult.metrics);
@@ -183,18 +231,56 @@ export function generateRecoveryCandidates(
     });
   }
 
-  // Sort by score ascending (most negative = best improvement)
-  candidates.sort((a, b) => a.score - b.score);
+  return candidates;
+}
 
-  // Deduplicate by action id, return top 6
+/**
+ * Evaluates and ranks candidate operational recovery actions (spare swaps,
+ * out-and-back cancellations, and bottleneck breaks) to mitigate disruption domino effects.
+ *
+ * @param network Static flight network dataset
+ * @param input Disruption parameters
+ * @param baseResult Baseline simulation result without intervention
+ * @returns Ranked, deduplicated list of top recovery candidates
+ */
+export function generateRecoveryCandidates(
+  network: FlightNetwork,
+  input: DisruptionInput,
+  baseResult: SimulationResult
+): RecoveryCandidate[] {
+  const closeStart = parseTime(input.startTime);
+  const closeEnd = closeStart + input.durationMinutes;
+
+  // 1. Evaluate spare aircraft swaps
+  const spareCandidates = findSpareSwapCandidates(network, input, baseResult, closeEnd);
+
+  // 2. Evaluate turn pair & single cancellations
+  const turnCandidates = findTurnPairAndCancellationCandidates(network, input, baseResult);
+
+  const combinedSoFar = [...spareCandidates, ...turnCandidates];
+
+  // 3. Evaluate bottleneck cancellations
+  const bottleneckCandidates = findBottleneckCancellationCandidates(
+    network,
+    input,
+    baseResult,
+    combinedSoFar
+  );
+
+  const allCandidates = [...combinedSoFar, ...bottleneckCandidates];
+
+  // Sort by score ascending (most negative = highest operational improvement)
+  allCandidates.sort((a, b) => a.score - b.score);
+
+  // Deduplicate by action ID and return top candidates
   const seen = new Set<string>();
-  const unique: RecoveryCandidate[] = [];
-  for (const c of candidates) {
+  const uniqueCandidates: RecoveryCandidate[] = [];
+  for (const c of allCandidates) {
     if (!seen.has(c.action.id)) {
       seen.add(c.action.id);
-      unique.push(c);
+      uniqueCandidates.push(c);
     }
   }
 
-  return unique.slice(0, 6);
+  return uniqueCandidates.slice(0, VALIDATION_LIMITS.MAX_RECOVERY_CANDIDATES);
 }

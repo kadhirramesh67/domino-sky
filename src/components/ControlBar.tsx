@@ -9,13 +9,28 @@ interface ControlBarProps {
   airports: Airport[];
 }
 
+const DURATION_OPTIONS = [
+  { value: 30, label: '30 mins' },
+  { value: 45, label: '45 mins' },
+  { value: 60, label: '60 mins (1 hr)' },
+  { value: 90, label: '90 mins (1.5 hrs)' },
+  { value: 120, label: '120 mins (2 hrs)' },
+  { value: 150, label: '150 mins (2.5 hrs)' },
+  { value: 180, label: '180 mins (3 hrs)' },
+  { value: 240, label: '240 mins (4 hrs)' },
+] as const;
+
+/**
+ * Control bar providing 1-click preset scenarios (Mumbai Monsoon, Delhi Fog, BLR Squall)
+ * and interactive controls for airport, closure time, and duration parameters.
+ */
 export default function ControlBar({
   input,
   onInputChange,
   presets,
   airports,
 }: ControlBarProps) {
-  const isPresetActive = (p: Preset) =>
+  const isPresetActive = (p: Preset): boolean =>
     p.airport === input.airport &&
     p.startTime === input.startTime &&
     p.durationMinutes === input.durationMinutes;
@@ -142,14 +157,11 @@ export default function ControlBar({
               aria-label="Closure Duration in Minutes"
               className="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-gray-100 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none"
             >
-              <option value={30}>30 mins</option>
-              <option value={45}>45 mins</option>
-              <option value={60}>60 mins (1 hr)</option>
-              <option value={90}>90 mins (1.5 hrs)</option>
-              <option value={120}>120 mins (2 hrs)</option>
-              <option value={150}>150 mins (2.5 hrs)</option>
-              <option value={180}>180 mins (3 hrs)</option>
-              <option value={240}>240 mins (4 hrs)</option>
+              {DURATION_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </div>
         </div>

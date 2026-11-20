@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, type ReactNode } from 'react';
 import type { DisruptionInput, SimulationResult } from './types/simulation';
 import type { RecoveryCandidate } from './types/recovery';
 import { simulateDisruption } from './engine/simulateDisruption';
@@ -14,8 +14,17 @@ import DispatcherPanel from './components/DispatcherPanel';
 
 const network = networkData as FlightNetwork;
 
-function App() {
-  const [input, setInput] = useState<DisruptionInput>(PRESETS[0]);
+/**
+ * Root component for Domino Sky: Flight Disruption Cascade & Recovery Simulator.
+ * Integrates interactive scenario controls, real-time KPI monitoring, topological
+ * network mapping, detailed flight cascade tracking, and AI OCC dispatcher briefs.
+ */
+function App(): ReactNode {
+  const [input, setInput] = useState<DisruptionInput>(PRESETS[0] ?? {
+    airport: 'BOM',
+    startTime: '07:30',
+    durationMinutes: 90,
+  });
   const [appliedRecovery, setAppliedRecovery] = useState<RecoveryCandidate | null>(null);
   const [selectedAirport, setSelectedAirport] = useState<string | null>(null);
   const [selectedFlight, setSelectedFlight] = useState<string | null>(null);
@@ -37,14 +46,16 @@ function App() {
     [input, baseResult]
   );
 
-  const handleApplyRecovery = useCallback((candidate: RecoveryCandidate) => {
-    setAppliedRecovery(prev => prev?.action.id === candidate.action.id ? null : candidate);
+  const handleApplyRecovery = useCallback((candidate: RecoveryCandidate): void => {
+    setAppliedRecovery((prev) => (prev?.action.id === candidate.action.id ? null : candidate));
   }, []);
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 font-mono">
       <header className="border-b border-gray-800 px-4 py-3 flex items-center gap-3">
-        <span className="text-cyan-400 text-xl" aria-hidden="true">✈</span>
+        <span className="text-cyan-400 text-xl" aria-hidden="true">
+          ✈
+        </span>
         <h1 className="text-lg font-bold text-cyan-400 tracking-wider uppercase">
           Domino Sky
         </h1>

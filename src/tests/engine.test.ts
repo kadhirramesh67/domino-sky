@@ -113,8 +113,11 @@ describe('Engine: Turnaround slack absorption (min_turnaround_minutes: 30)', () 
     };
 
     const result = simulateDisruption(miniNetwork, disruption);
-    const f1 = result.flights.find(f => f.flight_id === 'TEST101')!;
-    const f2 = result.flights.find(f => f.flight_id === 'TEST102')!;
+    const f1 = result.flights.find(f => f.flight_id === 'TEST101');
+    const f2 = result.flights.find(f => f.flight_id === 'TEST102');
+    expect(f1).toBeDefined();
+    expect(f2).toBeDefined();
+    if (!f1 || !f2) return;
 
     expect(f1.status).toBe('delayed');
     expect(f1.delayMinutes).toBe(30);
@@ -139,8 +142,11 @@ describe('Engine: Turnaround slack absorption (min_turnaround_minutes: 30)', () 
     };
 
     const result = simulateDisruption(miniNetwork, disruption);
-    const f1 = result.flights.find(f => f.flight_id === 'TEST101')!;
-    const f2 = result.flights.find(f => f.flight_id === 'TEST102')!;
+    const f1 = result.flights.find(f => f.flight_id === 'TEST101');
+    const f2 = result.flights.find(f => f.flight_id === 'TEST102');
+    expect(f1).toBeDefined();
+    expect(f2).toBeDefined();
+    if (!f1 || !f2) return;
 
     expect(f1.delayMinutes).toBe(50);
     expect(f2.status).toBe('delayed');
@@ -185,8 +191,9 @@ describe('Engine: Direct departure & arrival holds on airport closure', () => {
     };
     const result = simulateDisruption(fullNetwork, disruption);
 
-    const ds0201 = result.flights.find(f => f.flight_id === 'DS0201')!;
+    const ds0201 = result.flights.find(f => f.flight_id === 'DS0201');
     expect(ds0201).toBeDefined();
+    if (!ds0201) return;
     expect(ds0201.actualDep).toBe(410); // 06:50
     expect(ds0201.actualArr).toBe(540); // 09:00
     expect(ds0201.delayMinutes).toBe(50);
@@ -206,8 +213,9 @@ describe('Engine: Multi-leg cascade propagation & causal chain reasons', () => {
     };
     const result = simulateDisruption(fullNetwork, disruption);
 
-    const ds0202 = result.flights.find(f => f.flight_id === 'DS0202')!;
+    const ds0202 = result.flights.find(f => f.flight_id === 'DS0202');
     expect(ds0202).toBeDefined();
+    if (!ds0202) return;
 
     // Check flights with INBOUND_ROTATION_DELAY
     const cascadedFlights = result.flights.filter(f => f.reason === 'INBOUND_ROTATION_DELAY');
@@ -309,7 +317,9 @@ describe('Engine: Crew 600-min max_duty_mins breach detection', () => {
     expect(breach.maxDutyMins).toBe(600);
     expect(breach.groundedFlightIds).toContain('C3');
 
-    const c3Flight = result.flights.find(f => f.flight_id === 'C3')!;
+    const c3Flight = result.flights.find(f => f.flight_id === 'C3');
+    expect(c3Flight).toBeDefined();
+    if (!c3Flight) return;
     expect(c3Flight.status).toBe('crew_grounded');
     expect(c3Flight.crewDutyBreach).toBe(true);
     expect(c3Flight.reason).toBe('CREW_DUTY_BREACH');

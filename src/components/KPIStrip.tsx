@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { SimulationMetrics } from '../types/simulation';
 import { formatDelay } from '../engine/timeUtils';
 
@@ -6,12 +7,16 @@ interface KPIStripProps {
   baseMetrics: SimulationMetrics | null;
 }
 
+/**
+ * Renders key operational metrics (delayed flights, cancelled legs, stranded pax,
+ * broken connections, crew breaches, total delay) with Before vs After delta indicators.
+ */
 export default function KPIStrip({ metrics, baseMetrics }: KPIStripProps) {
   const renderDelta = (
     current: number,
     base: number | undefined,
     inverse = false // If inverse=true, negative is good (e.g. less delay, fewer stranded)
-  ) => {
+  ): ReactNode => {
     if (base === undefined || baseMetrics === null) return null;
     const diff = current - base;
     if (diff === 0) return <span className="text-gray-400 text-xs ml-1 font-mono">(0)</span>;
@@ -27,7 +32,7 @@ export default function KPIStrip({ metrics, baseMetrics }: KPIStripProps) {
     );
   };
 
-  const renderDelayDelta = (current: number, base: number | undefined) => {
+  const renderDelayDelta = (current: number, base: number | undefined): ReactNode => {
     if (base === undefined || baseMetrics === null) return null;
     const diff = current - base;
     if (diff === 0) return <span className="text-gray-400 text-xs ml-1 font-mono">(0m)</span>;

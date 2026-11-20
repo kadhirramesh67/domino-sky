@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { SimulatedFlight, BrokenConnection } from '../types/simulation';
-import { formatTime } from '../engine/timeUtils';
+import { FLIGHT_STATUS } from '../constants/index';
+import FlightCascadeRow from './FlightCascadeRow';
 
 interface FlightCascadeTableProps {
   flights: SimulatedFlight[];
@@ -12,6 +13,17 @@ interface FlightCascadeTableProps {
 
 type StatusFilter = 'all' | 'delayed' | 'cancelled' | 'crew_grounded' | 'on_time';
 
+const STATUS_FILTER_BUTTONS = [
+  ['all', 'All'],
+  ['delayed', 'Delayed'],
+  ['cancelled', 'Cancelled'],
+  ['crew_grounded', 'Grounded'],
+] as const;
+
+/**
+ * Interactive tabular display of flight schedules, delays, causal chains,
+ * and crew grounding status with instant multi-facet filtering.
+ */
 export default function FlightCascadeTable({
   flights,
   brokenConnections,
@@ -41,10 +53,10 @@ export default function FlightCascadeTable({
     return flights.filter((f) => {
       // Status filter
       if (statusFilter !== 'all') {
-        if (statusFilter === 'delayed' && f.status !== 'delayed') return false;
-        if (statusFilter === 'cancelled' && f.status !== 'cancelled') return false;
-        if (statusFilter === 'crew_grounded' && f.status !== 'crew_grounded') return false;
-        if (statusFilter === 'on_time' && f.status !== 'on_time') return false;
+        if (statusFilter === 'delayed' && f.status !== FLIGHT_STATUS.DELAYED) return false;
+        if (statusFilter === 'cancelled' && f.status !== FLIGHT_STATUS.CANCELLED) return false;
+        if (statusFilter === 'crew_grounded' && f.status !== FLIGHT_STATUS.CREW_GROUNDED) return false;
+        if (statusFilter === 'on_time' && f.status !== FLIGHT_STATUS.ON_TIME) return false;
       }
 
       // Airport filter
@@ -67,99 +79,6 @@ export default function FlightCascadeTable({
       return true;
     });
   }, [flights, statusFilter, selectedAirport, searchQuery]);
-
-  const getStatusBadge = (flight: SimulatedFlight) => {
-    switch (flight.status) {
-      case 'on_time':
-        return (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800">
-            ON TIME
-          </span>
-        );
-      case 'delayed':
-        return (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-950 text-amber-300 border border-amber-800">
-            +{flight.delayMinutes}m DELAY
-          </span>
-        );
-      case 'cancelled':
-        return (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-950 text-rose-300 border border-rose-800">
-            CANCELLED
-          </span>
-        );
-      case 'crew_grounded':
-        return (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-red-950 text-red-400 border border-red-700">
-            CREW GROUNDED
-          </span>
-        );
-    }
-  };
-
-  const formatCausalReason = (flight: SimulatedFlight) => {
-    if (flight.status === 'on_time') {
-      return <span className="text-gray-400">Operating normal schedule</span>;
-    }
-    if (flight.status === 'cancelled') {
-      return (
-        <span className="text-rose-400 font-semibold">
-          Cancelled by operations / recovery action
-        </span>
-      );
-    }
-    if (flight.status === 'crew_grounded') {
-      return (
-        <div className="space-y-0.5">
-          <span className="text-rose-300 font-semibold">
-            🚨 Crew Duty Exceeded (&gt;600m duty limit)
-          </span>
-          {flight.breachMinutes > 0 && (
-            <div className="text-[11px] text-rose-400">
-              Arrival would breach by +{flight.breachMinutes} min
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    if (flight.reason === 'DIRECT_DEPARTURE_HOLD') {
-      return (
-        <span className="text-amber-300">
-          Direct departure hold at {flight.origin} (airport closed)
-        </span>
-      );
-    }
-    if (flight.reason === 'DIRECT_ARRIVAL_HOLD') {
-      return (
-        <span className="text-amber-300">
-          Direct arrival hold at {flight.destination} (airport closed)
-        </span>
-      );
-    }
-    if (flight.reason === 'INBOUND_ROTATION_DELAY') {
-      return (
-        <div className="space-y-0.5">
-          <span className="text-amber-400">
-            Inbound aircraft turnaround ({flight.causedByFlightId ?? 'prior leg'})
-          </span>
-          {flight.causalChain && flight.causalChain.length > 0 && (
-            <div className="text-[10px] text-gray-400 flex items-center gap-1 font-mono flex-wrap">
-              <span>Cascade:</span>
-              {flight.causalChain.map((link, idx) => (
-                <span key={idx} className="bg-gray-800 px-1 py-0.5 rounded text-gray-300">
-                  {link.flightId} (+{link.delayMinutes}m)
-                  {idx < flight.causalChain.length - 1 ? ' → ' : ''}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    return <span className="text-gray-400">—</span>;
-  };
 
   return (
     <div
@@ -190,14 +109,7 @@ export default function FlightCascadeTable({
 
           {/* Status filter buttons */}
           <div className="inline-flex rounded-md shadow-xs bg-gray-950 p-0.5 border border-gray-800">
-            {(
-              [
-                ['all', 'All'],
-                ['delayed', 'Delayed'],
-                ['cancelled', 'Cancelled'],
-                ['crew_grounded', 'Grounded'],
-              ] as const
-            ).map(([val, label]) => (
+            {STATUS_FILTER_BUTTONS.map(([val, label]) => (
               <button
                 key={val}
                 type="button"
@@ -258,78 +170,13 @@ export default function FlightCascadeTable({
                 const brokenConns = flightConns.filter((c) => c.countsInMissedPax);
 
                 return (
-                  <tr
+                  <FlightCascadeRow
                     key={flight.flight_id}
-                    onClick={() => onFlightSelect(flight.flight_id)}
-                    className={`cursor-pointer transition-colors ${
-                      isSelected
-                        ? 'bg-cyan-950/70 border-l-4 border-cyan-400 text-cyan-100'
-                        : flight.status === 'cancelled' || flight.status === 'crew_grounded'
-                        ? 'hover:bg-rose-950/30'
-                        : flight.status === 'delayed'
-                        ? 'hover:bg-amber-950/30'
-                        : 'hover:bg-gray-800/40'
-                    }`}
-                  >
-                    {/* Flight / Tail */}
-                    <td className="px-3 py-2 font-bold whitespace-nowrap">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-cyan-300">{flight.flight_id}</span>
-                        <span className="text-[10px] text-gray-400 font-normal">
-                          {flight.tail_id} (L{flight.leg_order})
-                        </span>
-                      </div>
-                    </td>
-
-                    {/* Route */}
-                    <td className="px-3 py-2 whitespace-nowrap font-semibold">
-                      <span>{flight.origin}</span>
-                      <span className="text-gray-400 mx-1">→</span>
-                      <span>{flight.destination}</span>
-                    </td>
-
-                    {/* Scheduled */}
-                    <td className="px-3 py-2 text-gray-300 whitespace-nowrap">
-                      {formatTime(flight.scheduledDep)} – {formatTime(flight.scheduledArr)}
-                    </td>
-
-                    {/* Actual */}
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {flight.status === 'cancelled' || flight.status === 'crew_grounded' ? (
-                        <span className="text-rose-400 font-semibold">—</span>
-                      ) : (
-                        <span
-                          className={
-                            flight.delayMinutes > 0 ? 'text-amber-300 font-semibold' : 'text-gray-300'
-                          }
-                        >
-                          {formatTime(flight.actualDep)} – {formatTime(flight.actualArr)}
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Status / Delay */}
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      {getStatusBadge(flight)}
-                    </td>
-
-                    {/* Pax / Broken Conns */}
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <div className="flex flex-col">
-                        <span className="text-gray-200">{flight.pax} pax</span>
-                        {brokenConns.length > 0 && (
-                          <span className="text-[10px] text-purple-300 font-bold">
-                            ⚠️ {brokenConns.reduce((s, c) => s + c.passengers, 0)} missed conn
-                          </span>
-                        )}
-                      </div>
-                    </td>
-
-                    {/* Causal Chain */}
-                    <td className="px-3 py-2 text-xs">
-                      {formatCausalReason(flight)}
-                    </td>
-                  </tr>
+                    flight={flight}
+                    isSelected={isSelected}
+                    brokenConns={brokenConns}
+                    onFlightSelect={onFlightSelect}
+                  />
                 );
               })
             )}
